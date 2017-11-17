@@ -35,7 +35,8 @@
 namespace KlayGE
 {
 	Renderable::Renderable()
-		: select_mode_on_(false),
+		: active_lod_(0),
+			select_mode_on_(false),
 			model_mat_(float4x4::Identity()), effect_attrs_(0)
 	{
 		auto drl = Context::Instance().DeferredRenderingLayerInstance();
@@ -47,6 +48,26 @@ namespace KlayGE
 
 	Renderable::~Renderable()
 	{
+	}
+
+	void Renderable::NumLods(uint32_t lods)
+	{
+		KFL_UNUSED(lods);
+	}
+
+	uint32_t Renderable::NumLods() const
+	{
+		return 1;
+	}
+
+	void Renderable::ActiveLod(uint32_t lod)
+	{
+		active_lod_ = std::min(lod, this->NumLods() - 1);
+
+		for (auto const & mesh : subrenderables_)
+		{
+			mesh->ActiveLod(lod);
+		}
 	}
 
 	void Renderable::OnRenderBegin()
