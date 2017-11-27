@@ -277,9 +277,14 @@ namespace KlayGE
 		std::unordered_map<size_t, ID3D12PipelineStatePtr> graphics_psos_;
 		std::unordered_map<size_t, ID3D12PipelineStatePtr> compute_psos_;
 		std::unordered_map<size_t, ID3D12DescriptorHeapPtr> cbv_srv_uav_heaps_;
+
 		ID3D12PipelineState* curr_pso_;
 		ID3D12RootSignature* curr_graphics_root_signature_;
 		ID3D12RootSignature* curr_compute_root_signature_;
+		D3D12_RECT curr_scissor_rc_;
+		D3D12_PRIMITIVE_TOPOLOGY curr_topology_;
+		std::array<ID3D12DescriptorHeap*, 2> curr_desc_heaps_;
+		uint32_t curr_num_desc_heaps_;
 
 		std::mutex temp_buff_mutex_;
 		std::multimap<uint32_t, ID3D12ResourcePtr> temp_upload_free_buffs_;

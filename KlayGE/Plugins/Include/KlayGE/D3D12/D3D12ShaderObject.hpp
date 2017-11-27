@@ -128,6 +128,10 @@ namespace KlayGE
 		{
 			return so_template_.get();
 		}
+		void const * ShaderObjectTemplate() const
+		{
+			return so_template_.get();
+		}
 
 	private:
 		struct D3D12ShaderObjectTemplate

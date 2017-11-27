@@ -71,6 +71,8 @@ namespace KlayGE
 	/////////////////////////////////////////////////////////////////////////////////
 	D3D12RenderEngine::D3D12RenderEngine()
 		: curr_pso_(nullptr), curr_graphics_root_signature_(nullptr), curr_compute_root_signature_(nullptr),
+			curr_scissor_rc_({ 0, 0, 0, 0 }),
+			curr_num_desc_heaps_(0),
 			inv_timestamp_freq_(0),
 			render_cmd_fence_val_(0), res_cmd_fence_val_(0)
 	{
@@ -435,7 +437,9 @@ namespace KlayGE
 		{
 			d3d_render_cmd_list_->SetComputeRootSignature(curr_compute_root_signature_);
 		}
-		d3d_render_cmd_list_->IASetPrimitiveTopology(D3D12Mapping::Mapping(topology_type_cache_));
+		d3d_render_cmd_list_->IASetPrimitiveTopology(curr_topology_);
+		d3d_render_cmd_list_->RSSetScissorRects(1, &curr_scissor_rc_);
+		d3d_render_cmd_list_->SetDescriptorHeaps(curr_num_desc_heaps_, &curr_desc_heaps_[0]);
 
 		auto fb = checked_cast<D3D12FrameBuffer*>(this->CurFrameBuffer().get());
 		if (fb)
@@ -457,7 +461,8 @@ namespace KlayGE
 		blend_factor_cache_ = Color(1, 1, 1, 1);
 
 		topology_type_cache_ = RenderLayout::TT_PointList;
-		d3d_render_cmd_list_->IASetPrimitiveTopology(D3D12Mapping::Mapping(topology_type_cache_));
+		curr_topology_ = D3D12Mapping::Mapping(topology_type_cache_);
+		d3d_render_cmd_list_->IASetPrimitiveTopology(curr_topology_);
 
 		memset(&viewport_cache_, 0, sizeof(viewport_cache_));
 		memset(&scissor_rc_cache_, 0, sizeof(scissor_rc_cache_));
@@ -507,50 +512,55 @@ namespace KlayGE
 	void D3D12RenderEngine::UpdateRenderPSO(RenderEffect const & effect, RenderTechnique const & tech,
 		RenderPass const & pass, RenderLayout const & rl)
 	{
-		D3D12ShaderObjectPtr const & so = checked_pointer_cast<D3D12ShaderObject>(pass.GetShaderObject(effect));
-		D3D12RenderStateObject const & rso = *checked_pointer_cast<D3D12RenderStateObject>(pass.GetRenderStateObject());
+		auto const & so = *checked_cast<D3D12ShaderObject const *>(pass.GetShaderObject(effect).get());
+		auto const & rso = *checked_cast<D3D12RenderStateObject const *>(pass.GetRenderStateObject().get());
 
-		auto pso = rso.RetrieveGraphicsPSO(rl, so, this->CurFrameBuffer(), tech.HasTessellation());
+		auto pso = rso.RetrieveGraphicsPSO(rl, so, *this->CurFrameBuffer(), tech.HasTessellation());
 		if (pso != curr_pso_)
 		{
 			d3d_render_cmd_list_->SetPipelineState(pso);
 			curr_pso_ = pso;
 		}
 
-		auto root_signature = so->RootSignature();
+		auto root_signature = so.RootSignature();
 		if (root_signature != curr_graphics_root_signature_)
 		{
 			d3d_render_cmd_list_->SetGraphicsRootSignature(root_signature);
 			curr_graphics_root_signature_ = root_signature;
 		}
 
+		D3D12_RECT new_scissor_rc;
 		if (pass.GetRenderStateObject()->GetRasterizerStateDesc().scissor_enable)
 		{
-			d3d_render_cmd_list_->RSSetScissorRects(1, &scissor_rc_cache_);
+			new_scissor_rc = scissor_rc_cache_;
 		}
 		else
 		{
-			D3D12_RECT const rc =
+			new_scissor_rc =
 			{
 				static_cast<LONG>(viewport_cache_.TopLeftX),
 				static_cast<LONG>(viewport_cache_.TopLeftY),
 				static_cast<LONG>(viewport_cache_.TopLeftX + viewport_cache_.Width),
 				static_cast<LONG>(viewport_cache_.TopLeftY + viewport_cache_.Height)
 			};
-			d3d_render_cmd_list_->RSSetScissorRects(1, &rc);
+		}
+		if (memcmp(&new_scissor_rc, &curr_scissor_rc_, sizeof(new_scissor_rc)) != 0)
+		{
+			d3d_render_cmd_list_->RSSetScissorRects(1, &new_scissor_rc);
+			new_scissor_rc = curr_scissor_rc_;
 		}
 
 		size_t num_handle = 0;
 		for (uint32_t i = 0; i < ShaderObject::ST_NumShaderTypes; ++ i)
 		{
 			ShaderObject::ShaderType st = static_cast<ShaderObject::ShaderType>(i);
-			num_handle += so->SRVs(st).size() + so->UAVs(st).size();
+			num_handle += so.SRVs(st).size() + so.UAVs(st).size();
 		}
 
 		std::array<ID3D12DescriptorHeap*, 2> heaps;
 		uint32_t num_heaps = 0;
 		ID3D12DescriptorHeapPtr cbv_srv_uav_heap;
-		auto sampler_heap = so->SamplerHeap();
+		auto sampler_heap = so.SamplerHeap();
 		if (num_handle > 0)
 		{
 			size_t hash_val = 0;
@@ -558,20 +568,20 @@ namespace KlayGE
 			{
 				ShaderObject::ShaderType st = static_cast<ShaderObject::ShaderType>(i);
 				HashCombine(hash_val, st);
-				HashCombine(hash_val, so->SRVs(st).size());
-				if (!so->SRVs(st).empty())
+				HashCombine(hash_val, so.SRVs(st).size());
+				if (!so.SRVs(st).empty())
 				{
-					HashRange(hash_val, so->SRVs(st).begin(), so->SRVs(st).end());
+					HashRange(hash_val, so.SRVs(st).begin(), so.SRVs(st).end());
 				}
 			}
 			for (uint32_t i = 0; i < ShaderObject::ST_NumShaderTypes; ++ i)
 			{
 				ShaderObject::ShaderType st = static_cast<ShaderObject::ShaderType>(i);
 				HashCombine(hash_val, st);
-				HashCombine(hash_val, so->UAVs(st).size());
-				if (!so->UAVs(st).empty())
+				HashCombine(hash_val, so.UAVs(st).size());
+				if (!so.UAVs(st).empty())
 				{
-					HashRange(hash_val, so->UAVs(st).begin(), so->UAVs(st).end());
+					HashRange(hash_val, so.UAVs(st).begin(), so.UAVs(st).end());
 				}
 			}
 
@@ -594,20 +604,22 @@ namespace KlayGE
 			++ num_heaps;
 		}
 
-		if (num_heaps > 0)
+		if ((num_heaps != curr_num_desc_heaps_) || (heaps != curr_desc_heaps_))
 		{
 			d3d_render_cmd_list_->SetDescriptorHeaps(num_heaps, &heaps[0]);
+			curr_desc_heaps_ = heaps;
+			curr_num_desc_heaps_ = num_heaps;
 		}
 
 		uint32_t root_param_index = 0;
 		for (uint32_t i = 0; i < ShaderObject::ST_NumShaderTypes; ++ i)
 		{
 			ShaderObject::ShaderType st = static_cast<ShaderObject::ShaderType>(i);
-			if (!so->CBuffers(st).empty())
+			if (!so.CBuffers(st).empty())
 			{
-				for (uint32_t j = 0; j < so->CBuffers(st).size(); ++ j)
+				for (uint32_t j = 0; j < so.CBuffers(st).size(); ++ j)
 				{
-					auto buff = checked_cast<D3D12GraphicsBuffer*>(so->CBuffers(st)[j])->D3DResource().get();
+					auto buff = checked_cast<D3D12GraphicsBuffer*>(so.CBuffers(st)[j])->D3DResource().get();
 					if (buff)
 					{
 						d3d_render_cmd_list_->SetGraphicsRootConstantBufferView(root_param_index, buff->GetGPUVirtualAddress());
@@ -631,14 +643,14 @@ namespace KlayGE
 			for (uint32_t i = 0; i < ShaderObject::ST_NumShaderTypes; ++ i)
 			{
 				ShaderObject::ShaderType st = static_cast<ShaderObject::ShaderType>(i);
-				if (!so->SRVs(st).empty())
+				if (!so.SRVs(st).empty())
 				{
 					d3d_render_cmd_list_->SetGraphicsRootDescriptorTable(root_param_index, gpu_cbv_srv_uav_handle);
 
-					for (uint32_t j = 0; j < so->SRVs(st).size(); ++ j)
+					for (uint32_t j = 0; j < so.SRVs(st).size(); ++ j)
 					{
 						d3d_device_->CopyDescriptorsSimple(1, cpu_cbv_srv_uav_handle,
-							so->SRVs(st)[j] ? so->SRVs(st)[j]->Handle() : null_srv_handle_,
+							so.SRVs(st)[j] ? so.SRVs(st)[j]->Handle() : null_srv_handle_,
 							D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 						cpu_cbv_srv_uav_handle.ptr += cbv_srv_uav_desc_size;
 						gpu_cbv_srv_uav_handle.ptr += cbv_srv_uav_desc_size;
@@ -650,14 +662,14 @@ namespace KlayGE
 			for (uint32_t i = 0; i < ShaderObject::ST_NumShaderTypes; ++ i)
 			{
 				ShaderObject::ShaderType st = static_cast<ShaderObject::ShaderType>(i);
-				if (!so->UAVs(st).empty())
+				if (!so.UAVs(st).empty())
 				{
 					d3d_render_cmd_list_->SetGraphicsRootDescriptorTable(root_param_index, gpu_cbv_srv_uav_handle);
 
-					for (uint32_t j = 0; j < so->UAVs(st).size(); ++ j)
+					for (uint32_t j = 0; j < so.UAVs(st).size(); ++ j)
 					{
 						d3d_device_->CopyDescriptorsSimple(1, cpu_cbv_srv_uav_handle,
-							so->UAVs(st)[j] ? so->UAVs(st)[j]->Handle() : null_uav_handle_,
+							so.UAVs(st)[j] ? so.UAVs(st)[j]->Handle() : null_uav_handle_,
 							D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 						cpu_cbv_srv_uav_handle.ptr += cbv_srv_uav_desc_size;
 						gpu_cbv_srv_uav_handle.ptr += cbv_srv_uav_desc_size;
@@ -677,11 +689,11 @@ namespace KlayGE
 			for (uint32_t i = 0; i < ShaderObject::ST_NumShaderTypes; ++ i)
 			{
 				ShaderObject::ShaderType st = static_cast<ShaderObject::ShaderType>(i);
-				if (!so->Samplers(st).empty())
+				if (!so.Samplers(st).empty())
 				{
 					d3d_render_cmd_list_->SetGraphicsRootDescriptorTable(root_param_index, gpu_sampler_handle);
 
-					gpu_sampler_handle.ptr += sampler_desc_size * so->Samplers(st).size();
+					gpu_sampler_handle.ptr += sampler_desc_size * so.Samplers(st).size();
 
 					++ root_param_index;
 				}
@@ -691,8 +703,8 @@ namespace KlayGE
 
 	void D3D12RenderEngine::UpdateComputePSO(RenderEffect const & effect, RenderPass const & pass)
 	{
-		D3D12ShaderObjectPtr const & so = checked_pointer_cast<D3D12ShaderObject>(pass.GetShaderObject(effect));
-		D3D12RenderStateObject const & rso = *checked_pointer_cast<D3D12RenderStateObject>(pass.GetRenderStateObject());
+		auto const & so = *checked_cast<D3D12ShaderObject*>(pass.GetShaderObject(effect).get());
+		auto const & rso = *checked_cast<D3D12RenderStateObject*>(pass.GetRenderStateObject().get());
 
 		auto pso = rso.RetrieveComputePSO(so);
 		if (pso != curr_pso_)
@@ -701,7 +713,7 @@ namespace KlayGE
 			curr_pso_ = pso;
 		}
 
-		auto root_signature = so->RootSignature();
+		auto root_signature = so.RootSignature();
 		if (root_signature != curr_compute_root_signature_)
 		{
 			d3d_render_cmd_list_->SetComputeRootSignature(root_signature);
@@ -709,26 +721,26 @@ namespace KlayGE
 		}
 
 		ShaderObject::ShaderType const st = ShaderObject::ST_ComputeShader;
-		size_t const num_handle = so->SRVs(st).size() + so->UAVs(st).size();
+		size_t const num_handle = so.SRVs(st).size() + so.UAVs(st).size();
 
 		std::array<ID3D12DescriptorHeap*, 2> heaps;
 		uint32_t num_heaps = 0;
 		ID3D12DescriptorHeapPtr cbv_srv_uav_heap;
-		auto sampler_heap = so->SamplerHeap();
+		auto sampler_heap = so.SamplerHeap();
 		if (num_handle > 0)
 		{
 			size_t hash_val = 0;
 			HashCombine(hash_val, st);
-			HashCombine(hash_val, so->SRVs(st).size());
-			if (!so->SRVs(st).empty())
+			HashCombine(hash_val, so.SRVs(st).size());
+			if (!so.SRVs(st).empty())
 			{
-				HashRange(hash_val, so->SRVs(st).begin(), so->SRVs(st).end());
+				HashRange(hash_val, so.SRVs(st).begin(), so.SRVs(st).end());
 			}
 			HashCombine(hash_val, st);
-			HashCombine(hash_val, so->UAVs(st).size());
-			if (!so->UAVs(st).empty())
+			HashCombine(hash_val, so.UAVs(st).size());
+			if (!so.UAVs(st).empty())
 			{
-				HashRange(hash_val, so->UAVs(st).begin(), so->UAVs(st).end());
+				HashRange(hash_val, so.UAVs(st).begin(), so.UAVs(st).end());
 			}
 
 			auto iter = cbv_srv_uav_heaps_.find(hash_val);
@@ -750,17 +762,19 @@ namespace KlayGE
 			++ num_heaps;
 		}
 
-		if (num_heaps > 0)
+		if ((num_heaps != curr_num_desc_heaps_) || (heaps != curr_desc_heaps_))
 		{
 			d3d_render_cmd_list_->SetDescriptorHeaps(num_heaps, &heaps[0]);
+			curr_desc_heaps_ = heaps;
+			curr_num_desc_heaps_ = num_heaps;
 		}
 
 		uint32_t root_param_index = 0;
-		if (!so->CBuffers(st).empty())
+		if (!so.CBuffers(st).empty())
 		{
-			for (uint32_t j = 0; j < so->CBuffers(st).size(); ++ j)
+			for (uint32_t j = 0; j < so.CBuffers(st).size(); ++ j)
 			{
-				auto buff = checked_cast<D3D12GraphicsBuffer*>(so->CBuffers(st)[j])->D3DResource().get();
+				auto buff = checked_cast<D3D12GraphicsBuffer*>(so.CBuffers(st)[j])->D3DResource().get();
 				if (buff)
 				{
 					d3d_render_cmd_list_->SetComputeRootConstantBufferView(root_param_index, buff->GetGPUVirtualAddress());
@@ -780,14 +794,14 @@ namespace KlayGE
 			D3D12_CPU_DESCRIPTOR_HANDLE cpu_cbv_srv_uav_handle = cbv_srv_uav_heap->GetCPUDescriptorHandleForHeapStart();
 			D3D12_GPU_DESCRIPTOR_HANDLE gpu_cbv_srv_uav_handle = cbv_srv_uav_heap->GetGPUDescriptorHandleForHeapStart();
 
-			if (!so->SRVs(st).empty())
+			if (!so.SRVs(st).empty())
 			{
 				d3d_render_cmd_list_->SetComputeRootDescriptorTable(root_param_index, gpu_cbv_srv_uav_handle);
 
-				for (uint32_t j = 0; j < so->SRVs(st).size(); ++ j)
+				for (uint32_t j = 0; j < so.SRVs(st).size(); ++ j)
 				{
 					d3d_device_->CopyDescriptorsSimple(1, cpu_cbv_srv_uav_handle,
-						std::get<0>(so->SRVSrcs(st)[j]) ? so->SRVs(st)[j]->Handle() : null_srv_handle_,
+						std::get<0>(so.SRVSrcs(st)[j]) ? so.SRVs(st)[j]->Handle() : null_srv_handle_,
 						D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 					cpu_cbv_srv_uav_handle.ptr += cbv_srv_uav_desc_size;
 					gpu_cbv_srv_uav_handle.ptr += cbv_srv_uav_desc_size;
@@ -795,14 +809,14 @@ namespace KlayGE
 
 				++ root_param_index;
 			}
-			if (!so->UAVs(st).empty())
+			if (!so.UAVs(st).empty())
 			{
 				d3d_render_cmd_list_->SetComputeRootDescriptorTable(root_param_index, gpu_cbv_srv_uav_handle);
 
-				for (uint32_t j = 0; j < so->UAVs(st).size(); ++ j)
+				for (uint32_t j = 0; j < so.UAVs(st).size(); ++ j)
 				{
 					d3d_device_->CopyDescriptorsSimple(1, cpu_cbv_srv_uav_handle, 
-						so->UAVSrcs(st)[j].first ? so->UAVs(st)[j]->Handle() : null_uav_handle_,
+						so.UAVSrcs(st)[j].first ? so.UAVs(st)[j]->Handle() : null_uav_handle_,
 						D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 					cpu_cbv_srv_uav_handle.ptr += cbv_srv_uav_desc_size;
 					gpu_cbv_srv_uav_handle.ptr += cbv_srv_uav_desc_size;
@@ -818,11 +832,11 @@ namespace KlayGE
 
 			D3D12_GPU_DESCRIPTOR_HANDLE gpu_sampler_handle = sampler_heap->GetGPUDescriptorHandleForHeapStart();
 
-			if (!so->Samplers(st).empty())
+			if (!so.Samplers(st).empty())
 			{
 				d3d_render_cmd_list_->SetComputeRootDescriptorTable(root_param_index, gpu_sampler_handle);
 
-				gpu_sampler_handle.ptr += sampler_desc_size * so->Samplers(st).size();
+				gpu_sampler_handle.ptr += sampler_desc_size * so.Samplers(st).size();
 
 				++ root_param_index;
 			}
@@ -933,8 +947,9 @@ namespace KlayGE
 		}
 		if (topology_type_cache_ != tt)
 		{
-			d3d_render_cmd_list_->IASetPrimitiveTopology(D3D12Mapping::Mapping(tt));
 			topology_type_cache_ = tt;
+			curr_topology_ = D3D12Mapping::Mapping(tt);
+			d3d_render_cmd_list_->IASetPrimitiveTopology(curr_topology_);
 		}
 
 		uint32_t prim_count;
