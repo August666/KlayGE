@@ -89,9 +89,6 @@ namespace KlayGE
 		ID3D12CommandQueue* D3DRenderCmdQueue() const;
 		ID3D12CommandAllocator* D3DRenderCmdAllocator() const;
 		ID3D12GraphicsCommandList* D3DRenderCmdList() const;
-		ID3D12CommandQueue* D3DCopyCmdQueue() const;
-		ID3D12CommandAllocator* D3DCopyCmdAllocator() const;
-		ID3D12GraphicsCommandList* D3DCopyCmdList() const;
 		ID3D12CommandAllocator* D3DResCmdAllocator() const;
 		ID3D12GraphicsCommandList* D3DResCmdList() const;
 		std::mutex& D3DResCmdListMutex()
@@ -100,17 +97,14 @@ namespace KlayGE
 		}
 		D3D_FEATURE_LEVEL DeviceFeatureLevel() const;
 		void D3DDevice(ID3D12Device* device, ID3D12CommandQueue* cmd_queue, D3D_FEATURE_LEVEL feature_level);
-		void ClearPSOCache();
+		void ClearTempObjs();
 		void CommitRenderCmd();
-		void CommitCopyCmd();
 		void SyncRenderCmd();
-		void SyncCopyCmd();
 		void ResetRenderCmd();
-		void ResetCopyCmd();
 		void CommitResCmd();
 
 		void ForceFlush();
-		void ForceCPUGPUSync();
+		void ForceFinish();
 
 		virtual TexturePtr const & ScreenDepthStencilTexture() const override;
 
@@ -209,6 +203,15 @@ namespace KlayGE
 		void ReleaseAfterSync(ID3D12ResourcePtr const & buff);
 
 	private:
+		struct CmdAllocatorDependencies
+		{
+			ID3D12CommandAllocatorPtr cmd_allocator;
+			std::vector<ID3D12DescriptorHeapPtr> cbv_srv_uav_heap_cache_;
+			std::vector<ID3D12ResourcePtr> recycle_after_sync_buffs_;
+			std::vector<ID3D12ResourcePtr> release_after_sync_buffs_;
+		};
+
+	private:
 		D3D12AdapterList const & D3DAdapters() const;
 		D3D12AdapterPtr const & ActiveAdapter() const;
 
@@ -240,6 +243,9 @@ namespace KlayGE
 			RenderPass const & pass, RenderLayout const & rl);
 		void UpdateComputePSO(RenderEffect const & effect, RenderPass const & pass);
 
+		std::shared_ptr<CmdAllocatorDependencies> AllocCmdAllocator();
+		void RecycleCmdAllocator(std::shared_ptr<CmdAllocatorDependencies> const & cmd_allocator, uint64_t fence_val);
+
 	private:
 		// Direct3D rendering device
 		// Only created after top-level window created
@@ -249,11 +255,9 @@ namespace KlayGE
 
 		ID3D12DevicePtr d3d_device_;
 		ID3D12CommandQueuePtr d3d_render_cmd_queue_;
-		ID3D12CommandAllocatorPtr d3d_render_cmd_allocator_;
+		std::list<std::pair<std::shared_ptr<CmdAllocatorDependencies>, uint64_t>> d3d_render_cmd_allocators_;
+		std::shared_ptr<CmdAllocatorDependencies> curr_render_cmd_allocator_;
 		ID3D12GraphicsCommandListPtr d3d_render_cmd_list_;
-		ID3D12CommandQueuePtr d3d_copy_cmd_queue_;
-		ID3D12CommandAllocatorPtr d3d_copy_cmd_allocator_;
-		ID3D12GraphicsCommandListPtr d3d_copy_cmd_list_;
 		ID3D12CommandAllocatorPtr d3d_res_cmd_allocator_;
 		ID3D12GraphicsCommandListPtr d3d_res_cmd_list_;
 		std::mutex res_cmd_list_mutex_;
@@ -269,18 +273,14 @@ namespace KlayGE
 		D3D12_VIEWPORT viewport_cache_;
 		D3D12_RECT scissor_rc_cache_;
 		std::vector<GraphicsBufferPtr> so_buffs_;
-		std::vector<ID3D12DescriptorHeapPtr> cbv_srv_uav_heap_cache_;
 		std::unordered_map<size_t, ID3D12RootSignaturePtr> root_signatures_;
 		std::unordered_map<size_t, ID3D12PipelineStatePtr> graphics_psos_;
 		std::unordered_map<size_t, ID3D12PipelineStatePtr> compute_psos_;
 		std::unordered_map<size_t, ID3D12DescriptorHeapPtr> cbv_srv_uav_heaps_;
 
-		std::mutex temp_upload_buff_mutex_;
+		std::mutex temp_buff_mutex_;
 		std::multimap<uint32_t, ID3D12ResourcePtr> temp_upload_free_buffs_;
 		std::multimap<uint32_t, ID3D12ResourcePtr> temp_readback_free_buffs_;
-		std::vector<ID3D12ResourcePtr> recycle_after_sync_buffs_;
-
-		std::vector<ID3D12ResourcePtr> release_after_sync_buffs_;
 
 		ID3D12DescriptorHeapPtr rtv_desc_heap_;
 		uint32_t rtv_desc_size_;
@@ -319,8 +319,6 @@ namespace KlayGE
 
 		FencePtr render_cmd_fence_;
 		uint64_t render_cmd_fence_val_;
-		FencePtr copy_cmd_fence_;
-		uint64_t copy_cmd_fence_val_;
 
 		FencePtr res_cmd_fence_;
 		uint64_t res_cmd_fence_val_;

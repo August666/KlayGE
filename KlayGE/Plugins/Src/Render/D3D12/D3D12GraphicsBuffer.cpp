@@ -229,7 +229,7 @@ namespace KlayGE
 		{
 		case BA_Read_Only:
 		case BA_Read_Write:
-			re.ForceCPUGPUSync();
+			re.ForceFinish();
 			break;
 
 		case BA_Write_Only:
@@ -240,7 +240,7 @@ namespace KlayGE
 			}
 			else
 			{
-				re.ForceCPUGPUSync();
+				re.ForceFinish();
 			}
 			break;
 

@@ -891,7 +891,7 @@ namespace KlayGE
 
 			cmd_list->CopyTextureRegion(&dst, 0, 0, 0, &src, &src_box);
 
-			re.ForceCPUGPUSync();
+			re.ForceFinish();
 		}
 
 		ID3D12ResourcePtr d3d_texture_map_buff;
