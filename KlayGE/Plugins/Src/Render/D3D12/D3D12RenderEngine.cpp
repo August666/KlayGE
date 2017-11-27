@@ -70,7 +70,8 @@ namespace KlayGE
 	// ¹¹Ôìº¯Êý
 	/////////////////////////////////////////////////////////////////////////////////
 	D3D12RenderEngine::D3D12RenderEngine()
-		: inv_timestamp_freq_(0),
+		: curr_pso_(nullptr), curr_graphics_root_signature_(nullptr), curr_compute_root_signature_(nullptr),
+			inv_timestamp_freq_(0),
 			render_cmd_fence_val_(0), res_cmd_fence_val_(0)
 	{
 		UINT dxgi_factory_flags = 0;
@@ -425,7 +426,16 @@ namespace KlayGE
 
 	void D3D12RenderEngine::ResetRenderCmd()
 	{
-		d3d_render_cmd_list_->Reset(this->D3DRenderCmdAllocator(), nullptr);
+		d3d_render_cmd_list_->Reset(this->D3DRenderCmdAllocator(), curr_pso_);
+		if (curr_graphics_root_signature_ != nullptr)
+		{
+			d3d_render_cmd_list_->SetGraphicsRootSignature(curr_graphics_root_signature_);
+		}
+		if (curr_compute_root_signature_ != nullptr)
+		{
+			d3d_render_cmd_list_->SetComputeRootSignature(curr_compute_root_signature_);
+		}
+		d3d_render_cmd_list_->IASetPrimitiveTopology(D3D12Mapping::Mapping(topology_type_cache_));
 
 		auto fb = checked_cast<D3D12FrameBuffer*>(this->CurFrameBuffer().get());
 		if (fb)
@@ -501,9 +511,18 @@ namespace KlayGE
 		D3D12RenderStateObject const & rso = *checked_pointer_cast<D3D12RenderStateObject>(pass.GetRenderStateObject());
 
 		auto pso = rso.RetrieveGraphicsPSO(rl, so, this->CurFrameBuffer(), tech.HasTessellation());
+		if (pso != curr_pso_)
+		{
+			d3d_render_cmd_list_->SetPipelineState(pso);
+			curr_pso_ = pso;
+		}
 
-		d3d_render_cmd_list_->SetPipelineState(pso);
-		d3d_render_cmd_list_->SetGraphicsRootSignature(so->RootSignature());
+		auto root_signature = so->RootSignature();
+		if (root_signature != curr_graphics_root_signature_)
+		{
+			d3d_render_cmd_list_->SetGraphicsRootSignature(root_signature);
+			curr_graphics_root_signature_ = root_signature;
+		}
 
 		if (pass.GetRenderStateObject()->GetRasterizerStateDesc().scissor_enable)
 		{
@@ -511,7 +530,7 @@ namespace KlayGE
 		}
 		else
 		{
-			D3D12_RECT rc =
+			D3D12_RECT const rc =
 			{
 				static_cast<LONG>(viewport_cache_.TopLeftX),
 				static_cast<LONG>(viewport_cache_.TopLeftY),
@@ -588,7 +607,7 @@ namespace KlayGE
 			{
 				for (uint32_t j = 0; j < so->CBuffers(st).size(); ++ j)
 				{
-					ID3D12ResourcePtr const & buff = checked_cast<D3D12GraphicsBuffer*>(so->CBuffers(st)[j])->D3DResource();
+					auto buff = checked_cast<D3D12GraphicsBuffer*>(so->CBuffers(st)[j])->D3DResource().get();
 					if (buff)
 					{
 						d3d_render_cmd_list_->SetGraphicsRootConstantBufferView(root_param_index, buff->GetGPUVirtualAddress());
@@ -676,9 +695,18 @@ namespace KlayGE
 		D3D12RenderStateObject const & rso = *checked_pointer_cast<D3D12RenderStateObject>(pass.GetRenderStateObject());
 
 		auto pso = rso.RetrieveComputePSO(so);
+		if (pso != curr_pso_)
+		{
+			d3d_render_cmd_list_->SetPipelineState(pso);
+			curr_pso_ = pso;
+		}
 
-		d3d_render_cmd_list_->SetPipelineState(pso);
-		d3d_render_cmd_list_->SetComputeRootSignature(so->RootSignature());
+		auto root_signature = so->RootSignature();
+		if (root_signature != curr_compute_root_signature_)
+		{
+			d3d_render_cmd_list_->SetComputeRootSignature(root_signature);
+			curr_compute_root_signature_ = root_signature;
+		}
 
 		ShaderObject::ShaderType const st = ShaderObject::ST_ComputeShader;
 		size_t const num_handle = so->SRVs(st).size() + so->UAVs(st).size();
@@ -732,7 +760,7 @@ namespace KlayGE
 		{
 			for (uint32_t j = 0; j < so->CBuffers(st).size(); ++ j)
 			{
-				ID3D12ResourcePtr const & buff = checked_cast<D3D12GraphicsBuffer*>(so->CBuffers(st)[j])->D3DResource();
+				auto buff = checked_cast<D3D12GraphicsBuffer*>(so->CBuffers(st)[j])->D3DResource().get();
 				if (buff)
 				{
 					d3d_render_cmd_list_->SetComputeRootConstantBufferView(root_param_index, buff->GetGPUVirtualAddress());
@@ -905,9 +933,9 @@ namespace KlayGE
 		}
 		if (topology_type_cache_ != tt)
 		{
+			d3d_render_cmd_list_->IASetPrimitiveTopology(D3D12Mapping::Mapping(tt));
 			topology_type_cache_ = tt;
 		}
-		d3d_render_cmd_list_->IASetPrimitiveTopology(D3D12Mapping::Mapping(tt));
 
 		uint32_t prim_count;
 		switch (tt)
