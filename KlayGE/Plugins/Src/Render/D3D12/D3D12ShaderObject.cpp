@@ -1391,4 +1391,99 @@ namespace KlayGE
 	void D3D12ShaderObject::Unbind()
 	{
 	}
+
+	void D3D12ShaderObject::UpdatePsoDesc(D3D12_GRAPHICS_PIPELINE_STATE_DESC& pso_desc)
+	{
+		pso_desc.pRootSignature = so_template_->root_signature_.get();
+
+		{
+			auto blob = so_template_->shader_code_[ShaderObject::ST_VertexShader].first.get();
+			if (blob)
+			{
+				pso_desc.VS.pShaderBytecode = blob->data();
+				pso_desc.VS.BytecodeLength = static_cast<UINT>(blob->size());
+			}
+			else
+			{
+				pso_desc.VS.pShaderBytecode = nullptr;
+				pso_desc.VS.BytecodeLength = 0;
+			}
+		}
+		{
+			auto blob = so_template_->shader_code_[ShaderObject::ST_PixelShader].first.get();
+			if (blob)
+			{
+				pso_desc.PS.pShaderBytecode = blob->data();
+				pso_desc.PS.BytecodeLength = static_cast<UINT>(blob->size());
+			}
+			else
+			{
+				pso_desc.PS.pShaderBytecode = nullptr;
+				pso_desc.PS.BytecodeLength = 0;
+			}
+		}
+		{
+			auto blob = so_template_->shader_code_[ShaderObject::ST_DomainShader].first.get();
+			if (blob)
+			{
+				pso_desc.DS.pShaderBytecode = blob->data();
+				pso_desc.DS.BytecodeLength = static_cast<UINT>(blob->size());
+			}
+			else
+			{
+				pso_desc.DS.pShaderBytecode = nullptr;
+				pso_desc.DS.BytecodeLength = 0;
+			}
+		}
+		{
+			auto blob = so_template_->shader_code_[ShaderObject::ST_HullShader].first.get();
+			if (blob)
+			{
+				pso_desc.HS.pShaderBytecode = blob->data();
+				pso_desc.HS.BytecodeLength = static_cast<UINT>(blob->size());
+			}
+			else
+			{
+				pso_desc.HS.pShaderBytecode = nullptr;
+				pso_desc.HS.BytecodeLength = 0;
+			}
+		}
+		{
+			auto blob = so_template_->shader_code_[ShaderObject::ST_GeometryShader].first.get();
+			if (blob)
+			{
+				pso_desc.GS.pShaderBytecode = blob->data();
+				pso_desc.GS.BytecodeLength = static_cast<UINT>(blob->size());
+			}
+			else
+			{
+				pso_desc.GS.pShaderBytecode = nullptr;
+				pso_desc.GS.BytecodeLength = 0;
+			}
+		}
+
+		auto const & so_decls = so_template_->so_decl_;
+		pso_desc.StreamOutput.pSODeclaration = so_decls.data();
+		pso_desc.StreamOutput.NumEntries = static_cast<UINT>(so_decls.size());
+		pso_desc.StreamOutput.pBufferStrides = nullptr;
+		pso_desc.StreamOutput.NumStrides = 0;
+		pso_desc.StreamOutput.RasterizedStream = so_template_->rasterized_stream_;
+	}
+
+	void D3D12ShaderObject::UpdatePsoDesc(D3D12_COMPUTE_PIPELINE_STATE_DESC& pso_desc)
+	{
+		pso_desc.pRootSignature = so_template_->root_signature_.get();
+
+		auto blob = so_template_->shader_code_[ShaderObject::ST_ComputeShader].first.get();
+		if (blob)
+		{
+			pso_desc.CS.pShaderBytecode = blob->data();
+			pso_desc.CS.BytecodeLength = static_cast<UINT>(blob->size());
+		}
+		else
+		{
+			pso_desc.CS.pShaderBytecode = nullptr;
+			pso_desc.CS.BytecodeLength = 0;
+		}
+	}
 }

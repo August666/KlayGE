@@ -64,11 +64,6 @@ namespace KlayGE
 		void Bind();
 		void Unbind();
 
-		std::shared_ptr<std::vector<uint8_t>> const & ShaderBlob(ShaderType type) const
-		{
-			return so_template_->shader_code_[type].first;
-		}
-
 		uint32_t VSSignature() const
 		{
 			return so_template_->vs_signature_;
@@ -132,6 +127,9 @@ namespace KlayGE
 		{
 			return so_template_.get();
 		}
+
+		void UpdatePsoDesc(D3D12_GRAPHICS_PIPELINE_STATE_DESC& pso_desc);
+		void UpdatePsoDesc(D3D12_COMPUTE_PIPELINE_STATE_DESC& pso_desc);
 
 	private:
 		struct D3D12ShaderObjectTemplate
